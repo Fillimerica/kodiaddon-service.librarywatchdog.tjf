@@ -1,10 +1,13 @@
+v1.1.1
+- Fix monitor class being used incorrectly so addon can start
+
 v1.1.0
 - Update dependencies
 - Enable virtual filesystems nby fixing py3 unicode issues
 - Update abortRequested() API calls
 
 v1.0.0
-- Remove script.module.pathtools and script.module.watchdog so they are correctly referenced upstream 
+- Remove script.module.pathtools and script.module.watchdog so they are correctly referenced upstream
 
 v0.9.8
 - convert addon to work on py3
