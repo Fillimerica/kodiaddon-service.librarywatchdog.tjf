@@ -1,238 +1,261 @@
-'''
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+# -*- coding: utf-8 -*-
+#
+# Copyright (C) 2014 Thomas Amland
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-'''
+
 import os
-import re
+import time
 import traceback
-import simplejson
 import threading
-import pykka
-import watchdog
 import xbmc
-import xbmcaddon
-import xbmcvfs
-from time import sleep
-from urllib import unquote
-from functools import partial
+import xbmcgui
+from . import utils
+from . import settings
+from . import emitters
+from . import videolibrary
+from .utils import escape_param, log
+from itertools import repeat
 from watchdog.events import FileSystemEventHandler
+from watchdog.utils.compat import Event
+from .emitters import MultiEmitterObserver
 
-ADDON = xbmcaddon.Addon()
-ADDON_ID = ADDON.getAddonInfo('id')
-CLEAN = ADDON.getSetting('clean') == 'true'
-POLLING = int(ADDON.getSetting('method'))
-POLLING_METHOD = int(ADDON.getSetting('pollingmethod'))
-RECURSIVE = not (ADDON.getSetting('nonrecursive') == 'true') or not POLLING
-WATCH_VIDEO = ADDON.getSetting('watchvideo') == 'true'
-WATCH_MUSIC = ADDON.getSetting('watchmusic') == 'true'
-DELAY = int("0"+ADDON.getSetting('delay')) or 1
-POLLING_INTERVAL = int("0"+ADDON.getSetting('pollinginterval')) or 4
-SHOW_NOTIFICATIONS = ADDON.getSetting('notifications') == 'true'
-PAUSE_ON_PLAYBACK = ADDON.getSetting('pauseonplayback') == 'true'
-FORCE_GLOBAL_SCAN = ADDON.getSetting('forceglobalscan') == 'true'
-EXTENSIONS = "|.nsv|.m4a|.flac|.aac|.strm|.pls|.rm|.rma|.mpa|.wav|.wma|.ogg|.mp3|.mp2|.m3u|.mod|.amf|.669|.dmf|.dsm|.far|.gdm|.imf|.it|.m15|.med|.okt|.s3m|.stm|.sfx|.ult|.uni|.xm|.sid|.ac3|.dts|.cue|.aif|.aiff|.wpl|.ape|.mac|.mpc|.mp+|.mpp|.shn|.zip|.rar|.wv|.nsf|.spc|.gym|.adx|.dsp|.adp|.ymf|.ast|.afc|.hps|.xsp|.xwav|.waa|.wvs|.wam|.gcm|.idsp|.mpdsp|.mss|.spt|.rsd|.mid|.kar|.sap|.cmc|.cmr|.dmc|.mpt|.mpd|.rmt|.tmc|.tm8|.tm2|.oga|.url|.pxml|.tta|.rss|.cm3|.cms|.dlt|.brstm|.wtv|.mka|.m4v|.3g2|.3gp|.nsv|.tp|.ts|.ty|.strm|.pls|.rm|.rmvb|.m3u|.ifo|.mov|.qt|.divx|.xvid|.bivx|.vob|.nrg|.img|.iso|.pva|.wmv|.asf|.asx|.ogm|.m2v|.avi|.bin|.dat|.mpg|.mpeg|.mp4|.mkv|.avc|.vp3|.svq3|.nuv|.viv|.dv|.fli|.flv|.rar|.001|.wpl|.zip|.vdr|.dvr-ms|.xsp|.mts|.m2t|.m2ts|.evo|.ogv|.sdp|.avs|.rec|.url|.pxml|.vc1|.h264|.rcv|.rss|.mpls|.webm|.bdmv|.wtv|.m4v|.3g2|.3gp|.nsv|.tp|.ts|.ty|.strm|.pls|.rm|.rmvb|.m3u|.m3u8|.ifo|.mov|.qt|.divx|.xvid|.bivx|.vob|.nrg|.img|.iso|.pva|.wmv|.asf|.asx|.ogm|.m2v|.avi|.bin|.dat|.mpg|.mpeg|.mp4|.mkv|.avc|.vp3|.svq3|.nuv|.viv|.dv|.fli|.flv|.rar|.001|.wpl|.zip|.vdr|.dvr-ms|.xsp|.mts|.m2t|.m2ts|.evo|.ogv|.sdp|.avs|.rec|.url|.pxml|.vc1|.h264|.rcv|.rss|.mpls|.webm|.bdmv|.wtv|"
-
-class XBMCActor(pykka.ThreadingActor):
-  """ Messaging interface to xbmc's executebuiltin calls """
-  def _xbmc_is_busy(self):
-    sleep(1) # visibility cant be immediately trusted. Give xbmc time to render
-    return ((xbmc.Player().isPlaying() and PAUSE_ON_PLAYBACK)
-        or xbmc.getCondVisibility('Library.IsScanning')
-        or xbmc.getCondVisibility('Window.IsActive(10101)'))
-  
-  def scan(self, library, path):
-    """ Tell xbmc to scan. Returns immediately when scanning has started. """
-    while self._xbmc_is_busy():
-      pass
-    log("scanning %s (%s)" % (path, library))
-    if library == 'video' and FORCE_GLOBAL_SCAN:
-      xbmc.executebuiltin("UpdateLibrary(video)")
-    else:
-      xbmc.executebuiltin("UpdateLibrary(%s,%s)" % (library, escape_param(path)))
-  
-  def clean(self, library, path=None):
-    """ Tell xbmc to clean. Returns immediately when scanning has started. """
-    while self._xbmc_is_busy():
-      pass
-    log("cleaning %s library" % library)
-    xbmc.executebuiltin("CleanLibrary(%s)" % library)
-
-
-class EventQueue(pykka.ThreadingActor):
-  """ Handles all raw incomming events for single root path and library. """
-  def __init__(self, library, path, xbmc_actor):
-    super(EventQueue, self).__init__()
-    def ask(msg):
-      if msg == 'scan':
-        return xbmc_actor.scan(library, path).get()
-      elif msg == 'clean':
-        return xbmc_actor.clean(library, path).get()
-    self.new_worker = partial(EventQueue.Worker, ask)
-    self.worker = None
-  
-  def _notify_worker(self, attr):
-    if not(self.worker) or not(self.worker.isAlive()):
-      self.worker = self.new_worker()
-      setattr(self.worker, attr, True)
-      self.worker.start()
-    else:
-      setattr(self.worker, attr, True)
-  
-  def scan(self):
-    self._notify_worker('scan')
-  
-  def clean(self):
-    self._notify_worker('clean')
-  
-  class Worker(threading.Thread):
+class XBMCIF(threading.Thread):
+    """Wrapper around the builtins to make sure no two commands are executed at
+    the same time (xbmc will cancel previous if not finished)
     """
-    To be able to safely skip incomming duplicate events, we need a
-    normal thread that sends a single message and waits for reply.
-    """
-    def __init__(self, ask):
-      super(EventQueue.Worker, self).__init__()
-      self.ask = ask
-      self.scan = False
-      self.clean = False
-    
+
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self._stop_event = Event()
+        self._cmd_queue = utils.OrderedSetQueue()
+
+    def stop(self):
+        self._stop_event.set()
+        self._cmd_queue.put("stop")  # unblock wait
+
+    def queue_scan(self, library, path=None):
+        path = escape_param(path) if path else ""
+        cmd = "UpdateLibrary(%s,%s,%s)" % (library, path,
+                                           settings.SHOW_PROGRESS_DIALOG)
+        self._cmd_queue.put(cmd)
+
+    def queue_clean(self, library):
+        self._cmd_queue.put("CleanLibrary(%s,%s)"
+                            % (library, settings.SHOW_PROGRESS_DIALOG))
+
+    def queue_remove(self, library, path=None):
+        if settings.REMOVAL_ENABLED:
+            if settings.PER_FILE_REMOVE and path and library == 'video':
+                videolibrary.remove_video(path)
+            else:
+                self._cmd_queue.put("CleanLibrary(%s,%s)"
+                                    % (library, settings.SHOW_PROGRESS_DIALOG))
+
     def run(self):
-      sleep(DELAY)
-      while True:
-        if self.clean:
-          self.ask('clean') # returns when scanning has started
-          self.clean = False
-        if self.scan:
-          self.ask('scan')
-          self.scan = False
-        if not(self.scan) and not(self.clean):
-          return
+        player = xbmc.Player()
+        while True:
+            self._cmd_queue.wait()
+            if self._stop_event.wait(settings.SCAN_DELAY):
+                return
+            while player.isPlaying():
+                self._stop_event.wait(1)
+            if self._stop_event.is_set():
+                return
+
+            # Remove item right before it's executed so that any duplicates of
+            # this commands gets flushed from the queue.
+            cmd = self._cmd_queue.get_nowait()
+            log("[xbmcif] executing builtin: '%s'" % cmd)
+            xbmc.executebuiltin(cmd)
+
+            # wait for scan to start. we need a timeout or else we a screwed
+            # if we missed it.
+            # TODO: replace this crap with Monitor callbacks in Helix
+            log("[xbmcif] waiting for scan/clean start..")
+            timeout = 3000
+            while not xbmc.getCondVisibility('Library.IsScanning') \
+                    and not self._stop_event.is_set():
+                xbmc.sleep(100)
+                timeout -= 100
+                if timeout <= 0:
+                    log("[xbmcif] wait for scan/clean timed out.")
+                    break
+            log("[xbmcif] scan/clean started.")
+            log("[xbmcif] waiting for scan/clean end..")
+
+            # wait for scan to end
+            while xbmc.getCondVisibility('Library.IsScanning') \
+                    and not self._stop_event.is_set():
+                xbmc.sleep(100)
+            log("[xbmcif] scan/clean ended.")
 
 
 class EventHandler(FileSystemEventHandler):
-  def __init__(self, event_queue):
-    super(EventHandler, self).__init__()
-    self.event_queue = event_queue
-  
-  def on_created(self, event):
-    if not self._can_skip(event, event.src_path):
-      self.event_queue.scan()
-  
-  def on_deleted(self, event):
-    if CLEAN and not self._can_skip(event, event.src_path):
-      self.event_queue.clean()
-  
-  def on_moved(self, event):
-    if CLEAN and not self._can_skip(event, event.src_path):
-      self.event_queue.clean()
-    if not self._can_skip(event, event.dest_path):
-      self.event_queue.scan()
-  
-  def on_any_event(self, event):
-    log("<%s> <%s>" % (event.event_type, event.src_path))
-  
-  def _can_skip(self, event, path):
-    if not event.is_directory and path:
-      _, ext = os.path.splitext(path)
-      if EXTENSIONS.find('|%s|' % ext) == -1:
-        log("skipping <%s> <%s>" % (event.event_type, path))
-        return True
-    return False
+    """
+    Handles raw incoming events for single root path and library,
+    and queues scan/clean commands to the xbmcif singleton.
+    """
 
+    def __init__(self, library, path, xbmcif):
+        FileSystemEventHandler.__init__(self)
+        self.library = library
+        self.path = path
+        self.xbmcif = xbmcif
+        self.supported_media = '|' + xbmc.getSupportedMedia(library) + '|'
 
-def get_media_sources(type):
-  query = '{"jsonrpc": "2.0", "method": "Files.GetSources", "params": {"media": "%s"}, "id": 1}' % type
-  result = xbmc.executeJSONRPC(query)
-  json = simplejson.loads(result)
-  ret = []
-  if json.has_key('result'):
-    if json['result'].has_key('sources'):
-      paths = [ e['file'] for e in json['result']['sources'] ]
-      for path in paths:
-        #split and decode multipaths
-        if path.startswith("multipath://"):
-          for e in path.split("multipath://")[1].split('/'):
-            if e != "":
-              ret.append(unquote(e).encode('utf-8'))
-        else:
-          ret.append(path.encode('utf-8'))
-  return ret
+    def on_created(self, event):
+        if not event.is_directory and not self._can_skip(event, event.src_path):
+            # TODO: remove this hack when fixed in xbmc
+            if settings.FORCE_GLOBAL_SCAN and self.library == 'video':
+                self.xbmcif.queue_scan(self.library)
+            else:
+                self.xbmcif.queue_scan(self.library, self.path)
 
-def escape_param(s):
-  escaped = s.replace('\\', '\\\\').replace('"', '\\"')
-  return '"' + escaped + '"'
+    def on_deleted(self, event):
+        if not event.is_directory and not self._can_skip(event, event.src_path):
+            self.xbmcif.queue_remove(self.library, event.src_path)
 
-def log(msg):
-  xbmc.log("%s: %s" % (ADDON_ID, msg), xbmc.LOGDEBUG)
+    def on_moved(self, event):
+        self.on_deleted(event)
+        if not self._can_skip(event, event.dest_path):
+            # TODO: remove this hack when fixed in xbmc
+            if settings.FORCE_GLOBAL_SCAN and self.library == 'video':
+                self.xbmcif.queue_scan(self.library)
+            else:
+                self.xbmcif.queue_scan(self.library, self.path)
 
-def notify(msg1, msg2):
-  if SHOW_NOTIFICATIONS:
-    xbmc.executebuiltin("XBMC.Notification(Watchdog: %s,%s)" % (msg1, escape_param(msg2)))
+    def on_any_event(self, event):
+        log("[event] <%s> <%r>" % (event.event_type, event.src_path))
 
-def select_observer(path):
-  import observers
-  if os.path.exists(path): #path from xbmc appears to always be utf-8 so if it contains non-ascii and os is not utf-8, this will fail
-    if POLLING:
-      return observers.local_full()
-    return observers.auto()
-  elif re.match("^[A-Za-z]+://", path):
-    if xbmcvfs.exists(path):
-      observer_cls = [observers.xbmc_depth_1, observers.xbmc_depth_2, observers.xbmc_full][POLLING_METHOD]
-      return observer_cls(POLLING_INTERVAL)
-  return None
+    def _is_hidden(self, path):
+        sep = '/' if utils.is_url(self.path) else os.sep
+        relpath = path[len(self.path):] if path.startswith(self.path) else path
+        for part in relpath.split(sep):
+            if part.startswith('.') or part.startswith('_UNPACK'):
+                return True
+        return False
 
-def watch(library, xbmc_actor):
-  threads = []
-  sources = get_media_sources(library)
-  log("%s sources %s" % (library, sources))
-  for path in sources:
-    if xbmc.abortRequested:
-      break
-    observer = select_observer(path)
-    if observer:
-      try:
-        event_queue = EventQueue.start(library, path, xbmc_actor).proxy()
-        event_handler = EventHandler(event_queue)
-        observer.schedule(event_handler, path=path, recursive=RECURSIVE)
-        observer.start()
-        threads.append(observer)
-        threads.append(event_queue)
-        log("watching <%s> using %s" % (path, observer))
-      except Exception as e:
-        traceback.print_exc()
-        log("failed to watch <%s>" % path)
-        notify("Failed to watch", path)
-        continue
-    else:
-      log("not watching <%s>. does not exist" % path)
-      notify("Path does not exist", path)
-  return threads
+    def _can_skip(self, event, path):
+        if not path:
+            return False
+        if self._is_hidden(path):
+            log("[event] skipping <%s> <%r>" % (event.event_type, path))
+            return True
+        if not event.is_directory:
+            _, ext = os.path.splitext(path)
+            ext = ext.lower()
+            if self.supported_media.find('|%s|' % ext) == -1:
+                log("[event] skipping <%s> <%r>" % (event.event_type, path))
+                return True
+        return False
+
 
 def main():
-  xbmc_actor = XBMCActor.start().proxy()
-  threads = []
-  if WATCH_VIDEO:
-    threads.extend(watch('video', xbmc_actor))
-  if WATCH_MUSIC:
-    threads.extend(watch('music', xbmc_actor))
-  while not xbmc.abortRequested:
-    sleep(1)
-  for th in threads:
+    monitor = xbmc.Monitor()
+    progress = xbmcgui.DialogProgressBG()
     try:
-      th.stop()
-    except Exception as e:
-      traceback.print_exc()
-      continue
-  xbmc_actor.stop()
+        progress.create("Watchdog starting. Please wait...")
+    except:
+        progress = None
+
+    if settings.STARTUP_DELAY > 0:
+        log("waiting for user delay of %d seconds" % settings.STARTUP_DELAY)
+        msg = "Delaying startup by %d seconds."
+        if progress:
+            progress.update(0, message=msg % settings.STARTUP_DELAY)
+        start = time.time()
+        while time.time() - start < settings.STARTUP_DELAY:
+            xbmc.sleep(100)
+            if monitor.abortRequested():
+                if progress:
+                    progress.close()
+                return
+
+    sources = []
+    video_sources = settings.VIDEO_SOURCES
+    sources.extend(list(zip(repeat('video'), video_sources)))
+    log("video sources %s" % video_sources)
+
+    music_sources = settings.MUSIC_SOURCES
+    sources.extend(list(zip(repeat('music'), music_sources)))
+    log("music sources %s" % music_sources)
+
+    xbmcif = XBMCIF()
+    if settings.CLEAN_ON_START:
+        if video_sources:
+            xbmcif.queue_clean('video')
+        if music_sources:
+            xbmcif.queue_clean('music')
+
+    if settings.SCAN_ON_START:
+        if video_sources:
+            xbmcif.queue_scan('video')
+        if music_sources:
+            xbmcif.queue_scan('video')
+
+    observer = MultiEmitterObserver()
+    observer.start()  # start so emitters are started on schedule
+
+    for i, (libtype, path) in enumerate(sources):
+        if progress:
+            progress.update(int((i+1)/len(sources)*100), message="Setting up %s" % path)
+        try:
+            emitter_cls = emitters.select_emitter(path)
+        except IOError:
+            log("not watching <%s>. does not exist" % path)
+            continue
+        finally:
+            if monitor.abortRequested():
+                break
+
+        eh = EventHandler(libtype, path, xbmcif)
+        try:
+            observer.schedule(eh, path=path, emitter_cls=emitter_cls)
+            log("watching <%s> using %s" % (path, emitter_cls))
+        except Exception:
+            traceback.print_exc()
+            log("failed to watch <%s>" % path)
+        finally:
+            if monitor.abortRequested():
+                break
+
+    xbmcif.start()
+    if progress:
+        progress.close()
+    log("initialization done")
+
+    if settings.SHOW_STATUS_DIALOG:
+        watching = ["Watching '%s'" % path for _, path in sources
+                    if path in observer.paths]
+        not_watching = ["Not watching '%s'" % path for _, path in sources
+                        if path not in observer.paths]
+        dialog = xbmcgui.Dialog()
+        try:
+            dialog.select('Watchdog status', watching + not_watching)
+        except:
+            dialog = None
+
+    monitor.waitForAbort()
+
+    log("stopping..")
+    observer.stop()
+    xbmcif.stop()
+    observer.join()
+    xbmcif.join()
 
 if __name__ == "__main__":
-  main()
+    main()
