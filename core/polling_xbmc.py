@@ -26,9 +26,9 @@ from .utils import log, raise_if_aborted, vfs_lock
 
 def _has_bad_encoding(name):
     # xbmcvfs.listdir() decodes filenames leniently (surrogateescape-style),
-    # so a name that isn't valid UTF-8 on the source filesystem (e.g. Latin-1
+    # so a name which isn't valid UTF-8 on the source filesystem (e.g. Latin-1
     # accented characters on an NFS share) comes back as a str containing
-    # lone surrogate codepoints. Passing such a string back into xbmcvfsa
+    # lone surrogate codepoints. Passing such a string back into xbmcvfs
     # can crash when it tries to re-encode it for the native VFS layer, so
     # any such name has to be skipped rather than ever handed back to xbmcvfs.
     try:
