@@ -29,8 +29,8 @@ from . import emitters
 from . import videolibrary
 from .utils import escape_param, log
 from itertools import repeat
+from threading import Event
 from watchdog.events import FileSystemEventHandler
-from watchdog.utils.compat import Event
 from .emitters import MultiEmitterObserver
 
 class XBMCIF(threading.Thread):

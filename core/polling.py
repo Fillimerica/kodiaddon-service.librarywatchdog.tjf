@@ -61,7 +61,7 @@ class Poller(EventEmitter):
     list_files = None
 
     def __init__(self, event_queue, watch, timeout=1):
-        EventEmitter.__init__(self, event_queue, watch, timeout)
+        EventEmitter.__init__(self, event_queue, watch, timeout=timeout)
         self._snapshot = None
 
     def take_snapshot(self):

@@ -47,8 +47,8 @@ class MultiEmitterObserver(BaseObserver):
 
     def schedule(self, event_handler, path, emitter_cls=None):
         with self._lock:
-            watch = ObservedWatch(path, True)
-            emitter = emitter_cls(self.event_queue, watch, self.timeout)
+            watch = ObservedWatch(path, recursive=True)
+            emitter = emitter_cls(self.event_queue, watch, timeout=self.timeout)
             if self.is_alive():
                 emitter.start()
             self._add_handler_for_watch(event_handler, watch)
