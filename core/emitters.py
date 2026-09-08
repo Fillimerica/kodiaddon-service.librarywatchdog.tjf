@@ -60,10 +60,13 @@ class MultiEmitterObserver(BaseObserver):
 def select_emitter(path):
     import xbmcvfs
     from . import settings
-    from .utils import log
+    from .utils import log, vfs_lock
 
-    if is_url(path) and xbmcvfs.exists(path):
-        return VFSPoller
+    if is_url(path):
+        with vfs_lock:
+            path_exists = xbmcvfs.exists(path)
+        if path_exists:
+            return VFSPoller
 
     if os.path.exists(path):
         if settings.POLLING:

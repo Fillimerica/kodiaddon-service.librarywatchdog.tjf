@@ -21,12 +21,13 @@ import xbmcvfs
 from . import settings
 from functools import partial
 from .polling import Poller, PollerNonRecursive, file_list_from_walk, hidden
-from .utils import raise_if_aborted
+from .utils import raise_if_aborted, vfs_lock
 
 
 def _walk(path):
     raise_if_aborted()
-    dirs, files = xbmcvfs.listdir(path)
+    with vfs_lock:
+        dirs, files = xbmcvfs.listdir(path)
     # xbmcvfs bug: sometimes return invalid utf-8 encoding. we only care about
     # finding changed paths so it's ok to ignore here.
     dirs = [path + _ for _ in dirs if not hidden(_)]
@@ -38,12 +39,14 @@ def _walk(path):
 
 
 def _list_files(path):
-    dirs, files = xbmcvfs.listdir(path)
+    with vfs_lock:
+        dirs, files = xbmcvfs.listdir(path)
     return [path + '/' + f for f in files if not hidden(f)]
 
 
 def _get_mtime(path):
-    return xbmcvfs.Stat(path).st_mtime()
+    with vfs_lock:
+        return xbmcvfs.Stat(path).st_mtime()
 
 
 class _Recursive(Poller):
@@ -53,7 +56,8 @@ class _Recursive(Poller):
     def is_offline(self):
         # Since path is always a media source, it's unlikely the user would
         # delete it. Assume it's offline if it doesn't exist.
-        return not xbmcvfs.exists(self.watch.path)
+        with vfs_lock:
+            return not xbmcvfs.exists(self.watch.path)
 
 
 class _NonRecursive(PollerNonRecursive):
