@@ -28,10 +28,7 @@ from threading import Condition, Lock
 
 monitor = xbmc.Monitor()
 
-# Kodi's xbmcvfs bindings are not safe to call concurrently from multiple
-# threads (observed to segfault Kodi 21/Omega when two poller threads call
-# xbmcvfs.listdir() at the same time). Every xbmcvfs call in this addon must
-# go through this lock so at most one thread is ever inside the binding.
+# used to prevent multiple calls to xbmcvfs from different threads
 vfs_lock = Lock()
 
 def log(msg, level=xbmc.LOGDEBUG):
