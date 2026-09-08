@@ -28,6 +28,15 @@ def _paused():
     return xbmc.Player().isPlaying() and settings.PAUSE_ON_PLAYBACK
 
 
+def _library_scanning():
+    # Kodi's own library scanner walks the same media sources (including
+    # network shares) that our pollers do. While investigating a Kodi 21
+    # (Omega) crash, a poller calling xbmcvfs.listdir() on a share while
+    # Kodi's native scanner was concurrently walking it was one of the
+    # suspected causes, so pollers stand down while a scan/clean is running.
+    return xbmc.getCondVisibility('Library.IsScanning')
+
+
 def hidden(path):
     return path.startswith('.') or path.startswith('_UNPACK')
 
@@ -74,6 +83,8 @@ class Poller(EventEmitter):
         if self.stopped_event.wait(self.polling_interval):
             return
         if _paused():
+            return
+        if _library_scanning():
             return
         if self.is_offline():
             return
