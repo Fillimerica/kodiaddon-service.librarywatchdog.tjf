@@ -25,17 +25,21 @@ from .utils import raise_if_aborted, vfs_lock
 
 
 def _walk(path):
-    raise_if_aborted()
-    with vfs_lock:
-        dirs, files = xbmcvfs.listdir(path)
-    # xbmcvfs bug: sometimes return invalid utf-8 encoding. we only care about
-    # finding changed paths so it's ok to ignore here.
-    dirs = [path + _ for _ in dirs if not hidden(_)]
-    files = [path + _ for _ in files if not hidden(_)]
-    yield dirs, files
-    for d in dirs:
-        for dirs, files in _walk(d + '/'):
-            yield dirs, files
+    # recurse through xbmcvfs.listdir() via nested generator delegation:
+    # a flat, explicit work list means that every call to xbmcvfs.listdir()
+    # is made from the same context
+    pending = [path]
+    while pending:
+        current = pending.pop()
+        raise_if_aborted()
+        with vfs_lock:
+            dirs, files = xbmcvfs.listdir(current)
+        # sometimes xbmcvfs returns an invalid utf-8 encoding. we only care
+        # about finding changed paths so it's ok to ignore here
+        dirs = [current + _ for _ in dirs if not hidden(_)]
+        files = [current + _ for _ in files if not hidden(_)]
+        yield dirs, files
+        pending.extend(d + '/' for d in dirs)
 
 
 def _list_files(path):
