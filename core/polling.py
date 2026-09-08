@@ -29,11 +29,8 @@ def _paused():
 
 
 def _library_scanning():
-    # Kodi's own library scanner walks the same media sources (including
-    # network shares) that our pollers do. While investigating a Kodi 21
-    # (Omega) crash, a poller calling xbmcvfs.listdir() on a share while
-    # Kodi's native scanner was concurrently walking it was one of the
-    # suspected causes, so pollers stand down while a scan/clean is running.
+    # Kodi's own library scanner can scan the same media sources (including
+    # network shares), so stop if there is already an internal scan in progress
     return xbmc.getCondVisibility('Library.IsScanning')
 
 
