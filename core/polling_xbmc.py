@@ -21,7 +21,33 @@ import xbmcvfs
 from . import settings
 from functools import partial
 from .polling import Poller, PollerNonRecursive, file_list_from_walk, hidden
-from .utils import raise_if_aborted, vfs_lock
+from .utils import log, raise_if_aborted, vfs_lock
+
+
+def _has_bad_encoding(name):
+    # xbmcvfs.listdir() decodes filenames leniently (surrogateescape-style),
+    # so a name that isn't valid UTF-8 on the source filesystem (e.g. Latin-1
+    # accented characters on an NFS share) comes back as a str containing
+    # lone surrogate codepoints. Passing such a string back into xbmcvfsa
+    # can crash when it tries to re-encode it for the native VFS layer, so
+    # any such name has to be skipped rather than ever handed back to xbmcvfs.
+    try:
+        name.encode('utf-8')
+        return False
+    except UnicodeEncodeError:
+        return True
+
+
+def _filter_names(current, names):
+    ok = []
+    for name in names:
+        if hidden(name):
+            continue
+        if _has_bad_encoding(name):
+            log("skipping <%s> in <%s>: not representable as utf-8" % (name, current))
+            continue
+        ok.append(name)
+    return ok
 
 
 def _walk(path):
@@ -36,8 +62,8 @@ def _walk(path):
             dirs, files = xbmcvfs.listdir(current)
         # sometimes xbmcvfs returns an invalid utf-8 encoding. we only care
         # about finding changed paths so it's ok to ignore here
-        dirs = [current + _ for _ in dirs if not hidden(_)]
-        files = [current + _ for _ in files if not hidden(_)]
+        dirs = [current + d for d in _filter_names(current, dirs)]
+        files = [current + f for f in _filter_names(current, files)]
         yield dirs, files
         pending.extend(d + '/' for d in dirs)
 
@@ -45,7 +71,7 @@ def _walk(path):
 def _list_files(path):
     with vfs_lock:
         dirs, files = xbmcvfs.listdir(path)
-    return [path + '/' + f for f in files if not hidden(f)]
+    return [path + '/' + f for f in _filter_names(path, files)]
 
 
 def _get_mtime(path):
