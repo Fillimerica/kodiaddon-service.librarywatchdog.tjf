@@ -210,17 +210,26 @@ def main():
     observer = MultiEmitterObserver()
     observer.start()  # start so emitters are started on schedule
 
+# TF 10/2026 Code cleanup to remove the break in the finally block (no longer permitted)
+# code logic re-worked to remove the need for the finally clauses.
+
     for i, (libtype, path) in enumerate(sources):
         if progress:
             progress.update(int((i+1)/len(sources)*100), message="Setting up %s" % path)
+        
+        skipIteration=False # Flag to trigger the continue flow outside the try...block
+        
         try:
             emitter_cls = emitters.select_emitter(path)
         except IOError:
             log("not watching <%s>. does not exist" % path)
+            skipIteration=True
+
+        if monitor.abortRequested():
+            break
+            
+        if skipIteration:
             continue
-        finally:
-            if monitor.abortRequested():
-                break
 
         eh = EventHandler(libtype, path, xbmcif)
         try:
@@ -229,9 +238,10 @@ def main():
         except Exception:
             traceback.print_exc()
             log("failed to watch <%s>" % path)
-        finally:
-            if monitor.abortRequested():
-                break
+
+        if monitor.abortRequested():
+            break
+# End of for loop code refasctoring
 
     xbmcif.start()
     if progress:
