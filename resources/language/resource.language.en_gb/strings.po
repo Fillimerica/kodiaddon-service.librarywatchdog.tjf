@@ -198,6 +198,16 @@ msgctxt "#30069"
 msgid "Music Source 10"
 msgstr ""
 
+# TF 10/2026 Added new strings for setup of the automated file and folder cleanup on delete feature.
 
+msgctxt "#30101"
+msgid "Delete Associated Files (.edl, .xml, etc)"
+msgstr ""
 
+msgctxt "#30102"
+msgid "when Primary Media File is Deleted"
+msgstr ""
 
+msgctxt "#30103"
+msgid "also Remove Parent Folder if it is Empty"
+msgstr ""

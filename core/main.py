@@ -23,6 +23,7 @@ import traceback
 import threading
 import xbmc
 import xbmcgui
+import glob
 from . import utils
 from . import settings
 from . import emitters
@@ -32,6 +33,7 @@ from itertools import repeat
 from threading import Event
 from watchdog.events import FileSystemEventHandler
 from .emitters import MultiEmitterObserver
+#import web_pdb
 
 class XBMCIF(threading.Thread):
     """Wrapper around the builtins to make sure no two commands are executed at
@@ -103,6 +105,60 @@ class XBMCIF(threading.Thread):
                 xbmc.sleep(100)
             log("[xbmcif] scan/clean ended.")
 
+# TF 10/2026 Added new function to handle associated media files deletion.
+# Passing in a FQFN to the media file that was deleted. If the media file has
+# been erased, then erase all files in the folder that share the same base name.
+    def eraseRelated(self,pFQFN):
+        #web_pdb.set_trace()
+        #xbmc.log("[EraseRelated] Called Entry Point. Media=%s" % pFQFN, xbmc.LOGINFO)
+        if os.path.isfile(pFQFN):
+            log("[EraseRelated] The media file still exists. Erasure abandoned. Media=%s" % pFQFN)
+            return
+        log("[EraseRelated] The media deletion has started. Media=%s" % pFQFN)
+        mPathNoExt=os.path.splitext(pFQFN)[0]
+        mPathWC=mPathNoExt+'.*'
+        # glob finds all the full file paths that match the wildcard pattern
+        for file_path in glob.glob(mPathWC):
+            try:
+                if os.path.isfile(file_path):
+                    log("[EraseRelated] Attempt to erase a related file. Filename="+file_path)
+                    os.remove(file_path)
+            except Exception as e:
+                xbmc.log("[EraseRelated] Error while attempting to delete a related file. Filename=%s" % file_path, xbmc.LOGERROR)
+                xbmc.log("[EraseRelated] Error: %s" % e , xbmc.LOGERROR)
+
+        # See if parent folder erasure has also been requested.
+        if settings.ERASE_RELATED_FOLDER:
+            # See if the source path matches any Kodi Video sources.
+            mRelPath=""
+            mLibMatch=""
+            for kodiSource in settings.VIDEO_SOURCES:
+                if pFQFN.startswith(kodiSource):
+                    mLibMatch=kodiSource
+                    mRelFN=pFQFN.removeprefix(mLibMatch)
+                    mRelPath=os.path.dirname(mRelFN)
+                    break
+            # If there is a source match mLibMatch will hold the fixed source path
+            # and mRelPath will hold the relative folders that need to be erased.
+            log("[EraseRelated] Folder Deletion Requested. Relative Path=%s" % mRelPath)
+            if mRelPath:
+                # Have folders that possibly should be removed (if empty)
+                if mLibMatch:
+                    l_CWDPath=os.getcwd()
+                    try:
+                        os.chdir(mLibMatch)
+                        os.removedirs(mRelPath)
+                    except Exception as e:
+                        xbmc.log("[EraseRelated] Error while attempting to delete a related folder. Folder=%s" % mRelPath, xbmc.LOGERROR)
+                        xbmc.log("[EraseRelated] Error: %s" % e , xbmc.LOGERROR)
+                    else:
+                        log("[EraseRelated] Folder Deletion Completed without Error")
+                    finally:
+                        # Always try to restore the current working directory
+                        os.chdir(l_CWDPath)
+                else:
+                    xbmc.log("[EraseRelated] Folder Deletion Error. Can't determine Kodi Source path.", xbmc.LOGERROR)
+
 
 class EventHandler(FileSystemEventHandler):
     """
@@ -115,9 +171,13 @@ class EventHandler(FileSystemEventHandler):
         self.library = library
         self.path = path
         self.xbmcif = xbmcif
-        self.supported_media = '|' + xbmc.getSupportedMedia(library) + '|'
+# TF 10/2026 Bug resolved, Kodi includes a trailing pipe, so no need to add one on the end.
+# previously the extra pipe was causing erroneous media matches on files (and folders)
+# that did not have an extension. This fixes behavior in _can_skip as well.
+        self.supported_media = '|' + xbmc.getSupportedMedia(library)
 
     def on_created(self, event):
+        log("[librarywatchdog] ON_CREATED Path=%s" % event.src_path)
         if not event.is_directory and not self._can_skip(event, event.src_path):
             # TODO: remove this hack when fixed in xbmc
             if settings.FORCE_GLOBAL_SCAN and self.library == 'video':
@@ -126,10 +186,19 @@ class EventHandler(FileSystemEventHandler):
                 self.xbmcif.queue_scan(self.library, self.path)
 
     def on_deleted(self, event):
-        if not event.is_directory and not self._can_skip(event, event.src_path):
+        xbmc.log("[EraseRelated] ON_DELETED Called. Media=%s" % event.src_path, xbmc.LOGINFO)
+        if (not event.is_directory) and (not self._can_skip(event, event.src_path)):
             self.xbmcif.queue_remove(self.library, event.src_path)
+# TF 10/2026 Implement the related files deletion feature.
+# Caution. File operations (such as deleting related non-media files and folder removal)
+# will cause a re-trigger of this event for each element. The self._can_skip function
+# handles filtering so that the function isn't called repeatedly.
+            if settings.ERASE_RELATED_FILES:
+                self.xbmcif.eraseRelated(event.src_path)
+                
 
     def on_moved(self, event):
+        log("[librarywatchdog] ON_MOVED Path=%s" % event.src_path)
         self.on_deleted(event)
         if not self._can_skip(event, event.dest_path):
             # TODO: remove this hack when fixed in xbmc
@@ -138,8 +207,10 @@ class EventHandler(FileSystemEventHandler):
             else:
                 self.xbmcif.queue_scan(self.library, self.path)
 
-    def on_any_event(self, event):
-        log("[event] <%s> <%r>" % (event.event_type, event.src_path))
+# TF 10/2026 Disabled the log on every event to help reduce logging volume
+# when debugging other events.
+#    def on_any_event(self, event):
+        #log("[event] <%s> <%r>" % (event.event_type, event.src_path))
 
     def _is_hidden(self, path):
         sep = '/' if utils.is_url(self.path) else os.sep
@@ -153,13 +224,14 @@ class EventHandler(FileSystemEventHandler):
         if not path:
             return False
         if self._is_hidden(path):
-            log("[event] skipping <%s> <%r>" % (event.event_type, path))
+            log("[librarywatchdog] CAN_SKIP skipping hidden <%s> <%r>" % (event.event_type, path))
             return True
         if not event.is_directory:
             _, ext = os.path.splitext(path)
             ext = ext.lower()
+# TF 10/2026 Fixed the media return string so that paths with no extension aren't erroneously marked as valid media.
             if self.supported_media.find('|%s|' % ext) == -1:
-                log("[event] skipping <%s> <%r>" % (event.event_type, path))
+                log("[librarywatchdog] CAN_SKIP file is not media (extension) <%s> <%r>" % (event.event_type, path))
                 return True
         return False
 
@@ -249,13 +321,11 @@ def main():
     log("initialization done")
 
     if settings.SHOW_STATUS_DIALOG:
-        watching = ["Watching '%s'" % path for _, path in sources
-                    if path in observer.paths]
-        not_watching = ["Not watching '%s'" % path for _, path in sources
-                        if path not in observer.paths]
+        watching = "\n".join("Watching '%s'" % path for _, path in sources if path in observer.paths)
+        not_watching = "\n".join("Not watching '%s'" % path for _, path in sources if path not in observer.paths)
         dialog = xbmcgui.Dialog()
         try:
-            dialog.select('Watchdog status', watching + not_watching)
+            dialog.ok('Watchdog status', watching + not_watching)
         except:
             dialog = None
 

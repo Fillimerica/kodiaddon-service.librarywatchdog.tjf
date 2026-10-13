@@ -1,3 +1,12 @@
+v1.2.0
+- Fix bug in self.supported_media that was erroneously matching media with files that had no extension and folders.
+- Fix issues with oudated python code in main (break being called in a finally block)
+- New feature to monitor the Kodi library media file deletion action and delete the related files (.edl, .xml,.map etc)
+- Also added an option to delete the parent folder that the media was contained in.
+- Deleted some obsolete code such as the script extension point (not used)
+- Reformed settings.xml to use the modern Kodi format.
+- Code verification to work in Piers.
+
 v1.1.3
 - Fix compatibility with Kodi 21:
     - Add locking for xbmcvfs calls: walk VFS sources iteratively instead of via recursive generator delegation and stop when another library scan/clean is running

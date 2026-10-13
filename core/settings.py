@@ -36,6 +36,13 @@ SCAN_ON_START = ADDON.getSetting('scanonstart') == 'true'
 PER_FILE_REMOVE = int(ADDON.getSetting('removalmethod')) == 1
 SHOW_PROGRESS_DIALOG = ADDON.getSetting('hideprogress') == 'false'
 
+# TF 10/2026 Added new setting to control related files deletion feature.
+ERASE_RELATED_FILES = ADDON.getSetting('delRelatedFiles') == 'true'
+# For child erase option, only read it if the parent is enabled.
+if ERASE_RELATED_FILES:
+    ERASE_RELATED_FOLDER = ADDON.getSetting('delRelatedFolder') == 'true'
+else:
+    ERASE_RELATED_FOLDER = False
 
 if ADDON.getSetting('watchvideo') == 'true':
     VIDEO_SOURCES = utils.get_media_sources('video')
@@ -50,3 +57,4 @@ else:
     MUSIC_SOURCES = [ADDON.getSetting('musicsource%d' % i)
                      for i in range(1, 11)]
     MUSIC_SOURCES = [s for s in set(MUSIC_SOURCES) if s != ""]
+
